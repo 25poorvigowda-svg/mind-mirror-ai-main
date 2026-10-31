@@ -38,13 +38,15 @@ function RealisticPlutoAvatar({
   const avatarRef = useRef<THREE.Group>(null);
   const headBoneRef = useRef<THREE.Bone | null>(null);
   const neckBoneRef = useRef<THREE.Bone | null>(null);
+  const spineBoneRef = useRef<THREE.Bone | null>(null);
 
   // Mesh references for morph targets (Wolf3D_Head, Wolf3D_Teeth, EyeLeft, EyeRight)
   const morphMeshesRef = useRef<THREE.SkinnedMesh[]>([]);
 
-  // Blinking timer state
+  // Blinking timer state with organic double-blink timing
   const blinkTimerRef = useRef(0);
   const [blinkWeight, setBlinkWeight] = useState(0);
+  const isDoubleBlinkRef = useRef(false);
 
   // Cache cloned scene
   const clonedScene = useMemo(() => {
@@ -57,11 +59,31 @@ function RealisticPlutoAvatar({
       if ((node as THREE.Bone).isBone) {
         if (node.name === 'Head') headBoneRef.current = node as THREE.Bone;
         if (node.name === 'Neck') neckBoneRef.current = node as THREE.Bone;
+        if (node.name === 'Spine1' || node.name === 'Spine2') spineBoneRef.current = node as THREE.Bone;
       }
       if ((node as THREE.SkinnedMesh).isSkinnedMesh) {
         const mesh = node as THREE.SkinnedMesh;
         mesh.castShadow = true;
         mesh.receiveShadow = true;
+        if (mesh.material) {
+          // Tune PBR materials for realistic skin, hair, and clothing
+          const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+          if (mat instanceof THREE.MeshStandardMaterial) {
+            if (mesh.name.includes('Head') || mesh.name.includes('Body')) {
+              mat.roughness = 0.62;
+              mat.metalness = 0.02;
+            } else if (mesh.name.includes('Hair')) {
+              mat.roughness = 0.68;
+              mat.metalness = 0.05;
+            } else if (mesh.name.includes('Eye')) {
+              mat.roughness = 0.12;
+              mat.metalness = 0.0;
+            } else if (mesh.name.includes('Teeth')) {
+              mat.roughness = 0.25;
+              mat.metalness = 0.0;
+            }
+          }
+        }
         if (mesh.morphTargetDictionary && mesh.morphTargetInfluences) {
           meshes.push(mesh);
         }
@@ -71,7 +93,7 @@ function RealisticPlutoAvatar({
   }, [clonedScene]);
 
   // Helper to safely set morph target influence on all face meshes
-  const setMorph = (targetName: string, value: number) => {
+  const setMorph = (targetName: string, value: number, speed = 0.22) => {
     morphMeshesRef.current.forEach((mesh) => {
       if (mesh.morphTargetDictionary && mesh.morphTargetInfluences) {
         const idx = mesh.morphTargetDictionary[targetName];
@@ -79,7 +101,7 @@ function RealisticPlutoAvatar({
           mesh.morphTargetInfluences[idx] = THREE.MathUtils.lerp(
             mesh.morphTargetInfluences[idx],
             value,
-            0.22
+            speed
           );
         }
       }
@@ -89,15 +111,18 @@ function RealisticPlutoAvatar({
   useFrame((state, delta) => {
     const time = state.clock.getElapsedTime();
 
-    // 1. Natural Idle Breathing: subtle 8mm displacement at chest/spine
+    // 1. Natural Idle Breathing: realistic chest elevation & thoracic pitch
     if (avatarRef.current) {
-      avatarRef.current.position.y = Math.sin(time * 1.6) * 0.008;
+      avatarRef.current.position.y = Math.sin(time * 1.5) * 0.006;
+    }
+    if (spineBoneRef.current) {
+      spineBoneRef.current.rotation.x = Math.sin(time * 1.5) * 0.012;
     }
 
-    // 2. Cursor tracking with Head and Neck bones (smooth eye-contact feeling)
+    // 2. Head & Eye Contact tracking: smoothly tracks mouse/touch cursor
     if (headBoneRef.current) {
-      const targetRotY = state.pointer.x * 0.28;
-      const targetRotX = -state.pointer.y * 0.16;
+      const targetRotY = state.pointer.x * 0.26;
+      const targetRotX = -state.pointer.y * 0.14;
       headBoneRef.current.rotation.y = THREE.MathUtils.lerp(
         headBoneRef.current.rotation.y,
         targetRotY,
@@ -109,34 +134,42 @@ function RealisticPlutoAvatar({
         0.08
       );
 
-      // Listening alert tilt
-      const targetTilt = isListening ? 0.08 : emotion === 'confused' ? -0.1 : 0;
+      // Listening alert tilt vs idle subtle sway
+      const targetTilt = isListening ? 0.08 : emotion === 'confused' ? -0.11 : Math.sin(time * 0.8) * 0.015;
       headBoneRef.current.rotation.z = THREE.MathUtils.lerp(
         headBoneRef.current.rotation.z,
         targetTilt,
         0.06
       );
+
+      // Speech punctuation nod when speaking
+      if (isSpeaking) {
+        const speechNod = Math.sin(time * 6.5) * 0.025 * Math.min(1, lipSyncAmplitude * 1.5 + 0.3);
+        headBoneRef.current.rotation.x += speechNod;
+      }
     }
 
     if (neckBoneRef.current) {
       neckBoneRef.current.rotation.y = THREE.MathUtils.lerp(
         neckBoneRef.current.rotation.y,
-        state.pointer.x * 0.12,
+        state.pointer.x * 0.10,
         0.05
       );
     }
 
-    // 3. Natural Eye Blinking cycle
+    // 3. Natural Eye Blinking cycle with random double-blinks
     blinkTimerRef.current += delta;
-    if (blinkTimerRef.current > 3.6 + Math.sin(time * 0.7) * 1.4) {
+    if (blinkTimerRef.current > (isDoubleBlinkRef.current ? 0.25 : 3.4 + Math.sin(time * 0.7) * 1.2)) {
       blinkTimerRef.current = 0;
       setBlinkWeight(1);
+      // 18% chance of immediate follow-up double blink
+      isDoubleBlinkRef.current = !isDoubleBlinkRef.current && Math.random() < 0.18;
     }
     if (blinkWeight > 0) {
-      setBlinkWeight((prev) => Math.max(0, prev - delta * 7.5));
+      setBlinkWeight((prev) => Math.max(0, prev - delta * 8.5));
     }
-    setMorph('eyeBlinkLeft', blinkWeight);
-    setMorph('eyeBlinkRight', blinkWeight);
+    setMorph('eyeBlinkLeft', blinkWeight, 0.4);
+    setMorph('eyeBlinkRight', blinkWeight, 0.4);
 
     // 4. Emotion-based Facial Expressions
     const isHappy = emotion === 'happy' || emotion === 'excited';
@@ -145,44 +178,62 @@ function RealisticPlutoAvatar({
     const isConfused = emotion === 'confused';
     const isAngry = emotion === 'angry';
 
-    setMorph('mouthSmile', isHappy ? 0.75 : emotion === 'calm' ? 0.12 : 0);
-    setMorph('mouthSmileLeft', isHappy ? 0.35 : 0);
-    setMorph('mouthSmileRight', isHappy ? 0.35 : 0);
-    setMorph('mouthFrownLeft', isSad || isAngry ? 0.55 : 0);
-    setMorph('mouthFrownRight', isSad || isAngry ? 0.55 : 0);
+    // Warm resting smile (never completely flat or robotic)
+    const baseSmile = isHappy ? 0.82 : emotion === 'calm' ? 0.20 : 0.08;
+    setMorph('mouthSmile', baseSmile);
+    setMorph('mouthSmileLeft', isHappy ? 0.4 : baseSmile * 0.5);
+    setMorph('mouthSmileRight', isHappy ? 0.4 : baseSmile * 0.5);
+    setMorph('mouthFrownLeft', isSad || isAngry ? 0.45 : 0);
+    setMorph('mouthFrownRight', isSad || isAngry ? 0.45 : 0);
 
-    setMorph('browInnerUp', isSad || isConfused ? 0.55 : 0);
-    setMorph('browOuterUpLeft', isHappy ? 0.4 : 0);
-    setMorph('browOuterUpRight', isHappy ? 0.4 : 0);
-    setMorph('browDownLeft', isStressed || isAngry ? 0.6 : 0);
-    setMorph('browDownRight', isStressed || isAngry ? 0.6 : isConfused ? 0.3 : 0);
+    // Eyebrows
+    const listeningBrow = isListening ? 0.25 : 0;
+    setMorph('browInnerUp', (isSad || isConfused ? 0.6 : 0) + listeningBrow);
+    setMorph('browOuterUpLeft', isHappy ? 0.4 : listeningBrow * 0.5);
+    setMorph('browOuterUpRight', isHappy ? 0.4 : listeningBrow * 0.5);
+    setMorph('browDownLeft', isStressed || isAngry ? 0.55 : 0);
+    setMorph('browDownRight', isStressed || isAngry ? 0.55 : isConfused ? 0.35 : 0);
 
-    setMorph('eyeSquintLeft', isStressed ? 0.35 : isHappy ? 0.15 : 0);
-    setMorph('eyeSquintRight', isStressed ? 0.35 : isHappy ? 0.15 : 0);
-    setMorph('eyeWideLeft', emotion === 'excited' ? 0.3 : 0);
-    setMorph('eyeWideRight', emotion === 'excited' ? 0.3 : 0);
+    // Eyes
+    setMorph('eyeSquintLeft', isStressed ? 0.35 : isHappy ? 0.2 : 0);
+    setMorph('eyeSquintRight', isStressed ? 0.35 : isHappy ? 0.2 : 0);
+    setMorph('eyeWideLeft', emotion === 'excited' || isListening ? 0.22 : 0);
+    setMorph('eyeWideRight', emotion === 'excited' || isListening ? 0.22 : 0);
+    setMorph('cheekSquintLeft', isHappy ? 0.35 : 0);
+    setMorph('cheekSquintRight', isHappy ? 0.35 : 0);
     setMorph('noseSneerLeft', isAngry ? 0.45 : 0);
     setMorph('noseSneerRight', isAngry ? 0.45 : 0);
 
-    // 5. Speech-Synchronized Lip Movement (Visemes & Jaw Open)
+    // 5. Speech-Synchronized Lip Movement & Visemes
     if (isSpeaking) {
-      const baseAmp = lipSyncAmplitude > 0 ? lipSyncAmplitude : (Math.sin(time * 14) * 0.5 + 0.5) * 0.75;
-      const openAmount = Math.min(1.0, baseAmp * 1.25);
-      const visemeA = Math.sin(time * 11) > 0 ? openAmount * 0.85 : 0.08;
-      const visemeO = Math.cos(time * 9) > 0.2 ? openAmount * 0.65 : 0;
-      const visemeE = Math.sin(time * 16) > 0 ? openAmount * 0.55 : 0;
+      const baseAmp = lipSyncAmplitude > 0 ? lipSyncAmplitude : (Math.sin(time * 13) * 0.5 + 0.5) * 0.75;
+      const openAmount = Math.min(1.0, baseAmp * 1.35);
 
-      setMorph('mouthOpen', openAmount * 0.75);
-      setMorph('jawOpen', openAmount * 0.85);
-      setMorph('viseme_aa', visemeA);
-      setMorph('viseme_O', visemeO);
-      setMorph('viseme_E', visemeE);
+      // Realistic phonetic cadence cycle
+      const visemeA = (Math.sin(time * 10) > 0 ? 0.8 : 0.1) * openAmount;
+      const visemeO = (Math.cos(time * 8) > 0.2 ? 0.65 : 0) * openAmount;
+      const visemeE = (Math.sin(time * 14) > 0.1 ? 0.6 : 0.05) * openAmount;
+      const visemeI = (Math.cos(time * 12) > 0.3 ? 0.5 : 0) * openAmount;
+      const visemeU = (Math.sin(time * 7) > 0.4 ? 0.55 : 0) * openAmount;
+      const visemePP = (Math.sin(time * 18) > 0.8 ? 0.4 : 0) * openAmount;
+
+      setMorph('mouthOpen', openAmount * 0.75, 0.35);
+      setMorph('jawOpen', openAmount * 0.85, 0.35);
+      setMorph('viseme_aa', visemeA, 0.3);
+      setMorph('viseme_O', visemeO, 0.3);
+      setMorph('viseme_E', visemeE, 0.3);
+      setMorph('viseme_I', visemeI, 0.3);
+      setMorph('viseme_U', visemeU, 0.3);
+      setMorph('viseme_PP', visemePP, 0.3);
     } else {
-      setMorph('mouthOpen', 0);
-      setMorph('jawOpen', 0);
-      setMorph('viseme_aa', 0);
-      setMorph('viseme_O', 0);
-      setMorph('viseme_E', 0);
+      setMorph('mouthOpen', 0, 0.25);
+      setMorph('jawOpen', 0, 0.25);
+      setMorph('viseme_aa', 0, 0.25);
+      setMorph('viseme_O', 0, 0.25);
+      setMorph('viseme_E', 0, 0.25);
+      setMorph('viseme_I', 0, 0.25);
+      setMorph('viseme_U', 0, 0.25);
+      setMorph('viseme_PP', 0, 0.25);
     }
   });
 

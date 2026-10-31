@@ -265,26 +265,26 @@ export const StudioView: React.FC<StudioViewProps> = ({ onNotify }) => {
     <div className="space-y-8 animate-fadeIn max-w-6xl mx-auto">
       {/* Studio Header */}
       <div>
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/80 border border-cyan-500/30 text-cyan-300 text-xs font-semibold mb-2">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/80 dark:bg-cyan-950/80 light:bg-cyan-100 border border-cyan-500/30 text-cyan-300 dark:text-cyan-300 light:text-cyan-800 text-xs font-semibold mb-2">
           <Sparkles className="w-3.5 h-3.5" />
           <span>Generative AI Creative & Wellness Studio</span>
         </div>
-        <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
+        <h1 className="text-2xl md:text-3xl font-extrabold text-white dark:text-white light:text-slate-900 tracking-tight">
           Mind Studio: Images, Audio & Video
         </h1>
-        <p className="mt-1 text-sm text-slate-300 max-w-3xl">
+        <p className="mt-1 text-sm text-slate-300 dark:text-slate-300 light:text-slate-600 max-w-3xl">
           Visual and sonic sensory tools designed for stress reduction, focus anchoring, and creative visualization.
         </p>
       </div>
 
       {/* Navigation Sub-Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+      <div className="flex items-center gap-2 border-b border-slate-800 dark:border-slate-800 light:border-slate-200 pb-2">
         <button
           onClick={() => setActiveSubTab('image')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
             activeSubTab === 'image'
               ? 'bg-cyan-500 text-slate-950 shadow-lg shadow-cyan-500/20'
-              : 'text-slate-400 hover:text-white bg-slate-900/60 border border-slate-800'
+              : 'text-slate-400 dark:text-slate-400 light:text-slate-600 hover:text-white dark:hover:text-white light:hover:text-slate-900 bg-slate-900/60 dark:bg-slate-900/60 light:bg-slate-100 border border-slate-800 dark:border-slate-800 light:border-slate-200'
           }`}
         >
           <ImageIcon className="w-4 h-4" />
@@ -296,7 +296,7 @@ export const StudioView: React.FC<StudioViewProps> = ({ onNotify }) => {
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
             activeSubTab === 'audio'
               ? 'bg-teal-500 text-slate-950 shadow-lg shadow-teal-500/20'
-              : 'text-slate-400 hover:text-white bg-slate-900/60 border border-slate-800'
+              : 'text-slate-400 dark:text-slate-400 light:text-slate-600 hover:text-white dark:hover:text-white light:hover:text-slate-900 bg-slate-900/60 dark:bg-slate-900/60 light:bg-slate-100 border border-slate-800 dark:border-slate-800 light:border-slate-200'
           }`}
         >
           <Music className="w-4 h-4" />
@@ -308,7 +308,7 @@ export const StudioView: React.FC<StudioViewProps> = ({ onNotify }) => {
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
             activeSubTab === 'video'
               ? 'bg-violet-500 text-white shadow-lg shadow-violet-500/20'
-              : 'text-slate-400 hover:text-white bg-slate-900/60 border border-slate-800'
+              : 'text-slate-400 dark:text-slate-400 light:text-slate-600 hover:text-white dark:hover:text-white light:hover:text-slate-900 bg-slate-900/60 dark:bg-slate-900/60 light:bg-slate-100 border border-slate-800 dark:border-slate-800 light:border-slate-200'
           }`}
         >
           <Film className="w-4 h-4" />
@@ -319,14 +319,14 @@ export const StudioView: React.FC<StudioViewProps> = ({ onNotify }) => {
       {/* ================= 1. IMAGE GENERATION TAB ================= */}
       {activeSubTab === 'image' && (
         <div className="space-y-6">
-          <div className="rounded-3xl bg-slate-900/70 border border-cyan-500/20 p-6 backdrop-blur-xl space-y-4">
+          <div className="rounded-3xl bg-slate-900/70 dark:bg-slate-900/70 light:bg-white/95 border border-cyan-500/20 p-6 backdrop-blur-xl shadow-xl space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <h2 className="text-base font-bold text-white dark:text-white light:text-slate-900 flex items-center gap-2">
                   <ImageIcon className="w-4 h-4 text-cyan-400" />
                   <span>Mind Canvas: Text-to-Image Generation</span>
                 </h2>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className="text-xs text-slate-400 dark:text-slate-400 light:text-slate-500 mt-0.5">
                   Powered by Google Gemini 3.1 Flash Lite Image. Visualize calm landscapes, study retreats, or metaphorical representations of mental clarity.
                 </p>
               </div>
@@ -424,18 +424,24 @@ export const StudioView: React.FC<StudioViewProps> = ({ onNotify }) => {
                     key={img.id}
                     className="rounded-3xl bg-slate-900/60 border border-slate-800 overflow-hidden shadow-xl space-y-3 p-4 flex flex-col justify-between"
                   >
-                    <div className="overflow-hidden rounded-2xl bg-slate-950 flex items-center justify-center">
+                    <div className="overflow-hidden rounded-2xl bg-slate-950 dark:bg-slate-950 light:bg-slate-100 flex items-center justify-center p-1 border border-slate-800 dark:border-slate-800 light:border-slate-200">
                       <img
                         src={img.url}
                         alt={img.prompt}
-                        className={`w-full object-contain max-h-[380px] hover:scale-105 transition-transform duration-500 ${
-                          img.ratio === '16:9' ? 'aspect-video' : img.ratio === '9:16' ? 'aspect-[9/16]' : 'aspect-square'
+                        className={`w-full max-h-[380px] object-contain rounded-xl hover:scale-[1.02] transition-transform duration-300 ${
+                          img.ratio === '16:9'
+                            ? 'aspect-video'
+                            : img.ratio === '9:16'
+                            ? 'aspect-[9/16] max-h-[360px]'
+                            : img.ratio === '4:3'
+                            ? 'aspect-[4/3]'
+                            : 'aspect-square'
                         }`}
                       />
                     </div>
                     <div>
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-950 border border-cyan-500/40 text-cyan-300">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-950/80 dark:bg-cyan-950/80 light:bg-cyan-100 border border-cyan-500/40 text-cyan-300 dark:text-cyan-300 light:text-cyan-800">
                           {img.isGenerativeFallback ? 'Mind Canvas Art' : 'Gemini 3.1 Flash Lite'}
                         </span>
                         <span className="text-[11px] text-slate-500 font-mono">Ratio {img.ratio}</span>

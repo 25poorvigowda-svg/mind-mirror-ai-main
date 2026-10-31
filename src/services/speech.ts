@@ -39,6 +39,66 @@ export function detectLanguage(text: string): SupportedLanguage {
   return 'en-US';
 }
 
+export type MicPermissionState = 'granted' | 'prompt' | 'denied' | 'restricted' | 'unsupported';
+
+export interface AudioDeviceInfo {
+  deviceId: string;
+  label: string;
+  groupId?: string;
+}
+
+/**
+ * Check whether the application is running in a secure context (HTTPS or localhost)
+ */
+export function isSecureContext(): boolean {
+  if (typeof window === 'undefined') return true;
+  if (typeof window.isSecureContext !== 'undefined') {
+    return window.isSecureContext;
+  }
+  const protocol = window.location.protocol;
+  const hostname = window.location.hostname;
+  return (
+    protocol === 'https:' ||
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname.endsWith('.localhost')
+  );
+}
+
+/**
+ * Check whether the application is running inside an embedded iframe
+ */
+export function isRunningInIframe(): boolean {
+  try {
+    return typeof window !== 'undefined' && window.self !== window.top;
+  } catch (e) {
+    return true; // Cross-origin access blocked implies iframe
+  }
+}
+
+/**
+ * Check whether the iframe allows microphone access via feature / permissions policy
+ */
+export function isMicrophoneAllowedByIframePolicy(): boolean {
+  if (typeof document === 'undefined') return true;
+  const doc = document as any;
+  if (doc.permissionsPolicy && typeof doc.permissionsPolicy.allowsFeature === 'function') {
+    try {
+      return doc.permissionsPolicy.allowsFeature('microphone');
+    } catch (e) {
+      // Continue to check
+    }
+  }
+  if (doc.featurePolicy && typeof doc.featurePolicy.allowsFeature === 'function') {
+    try {
+      return doc.featurePolicy.allowsFeature('microphone');
+    } catch (e) {
+      // Continue to check
+    }
+  }
+  return true;
+}
+
 export interface SpeechRecognitionCallbacks {
   onStart?: () => void;
   onResult?: (transcript: string, isFinal: boolean) => void;
@@ -58,6 +118,8 @@ export interface SpeechSynthesisCallbacks {
 export class SpeechService {
   private recognition: any = null;
   private isListening = false;
+  private isAcquiring = false;
+  private selectedDeviceId: string = '';
   private currentUtterance: SpeechSynthesisUtterance | null = null;
   private lipSyncCallback: ((amplitude: number) => void) | null = null;
   private lipSyncInterval: number | null = null;
@@ -73,6 +135,97 @@ export class SpeechService {
   private currentLanguage = 'en-US';
   private latestTranscript = '';
   private webSpeechReceivedText = false;
+  private permissionListeners: Set<(state: MicPermissionState) => void> = new Set();
+  private lastKnownPermissionState: MicPermissionState = 'unknown' as any;
+
+  constructor() {
+    this.initPermissionObserver();
+  }
+
+  private async initPermissionObserver(): Promise<void> {
+    if (typeof navigator === 'undefined' || !navigator.permissions?.query) return;
+    try {
+      const status = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+      this.lastKnownPermissionState = status.state as MicPermissionState;
+      status.onchange = () => {
+        const nextState = status.state as MicPermissionState;
+        this.lastKnownPermissionState = nextState;
+        this.notifyPermissionListeners(nextState);
+      };
+    } catch (e) {
+      // Some browsers (e.g. Safari, Firefox) don't support microphone query in permissions API
+    }
+  }
+
+  public onPermissionChange(cb: (state: MicPermissionState) => void): () => void {
+    this.permissionListeners.add(cb);
+    return () => this.permissionListeners.delete(cb);
+  }
+
+  private notifyPermissionListeners(state: MicPermissionState): void {
+    this.permissionListeners.forEach((fn) => {
+      try {
+        fn(state);
+      } catch (e) {
+        // Safe callback execution
+      }
+    });
+  }
+
+  /**
+   * Check current browser microphone permission state
+   */
+  public async checkPermissionStatus(): Promise<MicPermissionState> {
+    if (!isSecureContext()) {
+      return 'restricted';
+    }
+
+    if (isRunningInIframe() && !isMicrophoneAllowedByIframePolicy()) {
+      return 'restricted';
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.permissions?.query) {
+      try {
+        const status = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+        this.lastKnownPermissionState = status.state as MicPermissionState;
+        return status.state as MicPermissionState;
+      } catch (e) {
+        // Fallback for browsers that do not support permission query for microphone
+      }
+    }
+
+    return this.lastKnownPermissionState || 'prompt';
+  }
+
+  /**
+   * Enumerate available audio input devices (microphones)
+   */
+  public async getAudioInputDevices(): Promise<AudioDeviceInfo[]> {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
+      return [];
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices
+        .filter((d) => d.kind === 'audioinput')
+        .map((d, index) => ({
+          deviceId: d.deviceId,
+          label: d.label || `Microphone ${index + 1}`,
+          groupId: d.groupId,
+        }));
+    } catch (e) {
+      console.warn('Could not enumerate audio devices:', e);
+      return [];
+    }
+  }
+
+  public setSelectedDeviceId(deviceId: string): void {
+    this.selectedDeviceId = deviceId;
+  }
+
+  public getSelectedDeviceId(): string {
+    return this.selectedDeviceId;
+  }
 
   public isRecognitionSupported(): boolean {
     return typeof window !== 'undefined' && !!(
@@ -87,16 +240,127 @@ export class SpeechService {
   }
 
   /**
-   * Start listening with resilient dual-engine architecture:
-   * 1. Explicitly prompts browser microphone permissions via getUserMedia.
-   * 2. Runs Web Speech API if supported for zero-latency live streaming text.
-   * 3. Concurrently records audio with MediaRecorder for fallback transcription via Gemini if Web Speech fails or is unsupported.
-   * 4. Computes live audio levels via AnalyserNode to drive audio visualizers.
+   * Explicitly request/test microphone access to grant browser permissions.
+   * Cleans up tracks immediately so the mic does not stay active.
+   */
+  public async requestMicrophonePermission(): Promise<{ granted: boolean; error?: string; state: MicPermissionState }> {
+    if (!isSecureContext()) {
+      return {
+        granted: false,
+        error: 'Microphone access requires a secure context (HTTPS or localhost).',
+        state: 'restricted',
+      };
+    }
+
+    if (isRunningInIframe() && !isMicrophoneAllowedByIframePolicy()) {
+      return {
+        granted: false,
+        error: 'Microphone is restricted by the embedded container. Open Mind Mirror AI in a standalone tab.',
+        state: 'restricted',
+      };
+    }
+
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      return {
+        granted: false,
+        error: 'getUserMedia is not supported by your browser.',
+        state: 'unsupported',
+      };
+    }
+
+    try {
+      const testStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      testStream.getTracks().forEach((track) => {
+        track.stop();
+        track.enabled = false;
+      });
+      this.lastKnownPermissionState = 'granted';
+      this.notifyPermissionListeners('granted');
+      return { granted: true, state: 'granted' };
+    } catch (err: any) {
+      const categorized = this.categorizeMediaError(err);
+      this.lastKnownPermissionState = categorized.state;
+      this.notifyPermissionListeners(categorized.state);
+      return { granted: false, error: categorized.message, state: categorized.state };
+    }
+  }
+
+  /**
+   * Categorize getUserMedia errors into distinct, actionable user feedback
+   */
+  private categorizeMediaError(err: any): { message: string; state: MicPermissionState } {
+    const name = err?.name || '';
+    const message = err?.message || '';
+    const inIframe = isRunningInIframe();
+
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+      if (inIframe) {
+        return {
+          message: 'Microphone permission was blocked by the browser or embedded frame. If you already allowed access, open the app in a standalone tab to grant direct microphone permission.',
+          state: 'denied',
+        };
+      }
+      return {
+        message: 'Microphone permission was denied. Click the site settings icon (padlock/tune) in your browser address bar, set Microphone to "Allow", and click Retry.',
+        state: 'denied',
+      };
+    }
+
+    if (name === 'SecurityError') {
+      return {
+        message: 'Microphone access was blocked by browser security policy. Verify that the app is running on a secure origin (HTTPS/localhost) and the frame has microphone permission.',
+        state: 'restricted',
+      };
+    }
+
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+      return {
+        message: 'No microphone was detected on your computer. Please plug in or connect a microphone or headset and retry.',
+        state: 'unsupported',
+      };
+    }
+
+    if (name === 'NotReadableError' || name === 'TrackStartError') {
+      return {
+        message: 'Microphone is currently in use by another application or browser tab (e.g. Zoom, Google Meet, Microsoft Teams). Please close the competing application and retry.',
+        state: 'prompt',
+      };
+    }
+
+    if (name === 'OverconstrainedError') {
+      return {
+        message: 'The requested microphone audio constraints are not supported by your hardware. Switching to default audio...',
+        state: 'prompt',
+      };
+    }
+
+    if (name === 'AbortError') {
+      return {
+        message: 'Microphone request was interrupted. Please click the microphone button again to speak.',
+        state: 'prompt',
+      };
+    }
+
+    return {
+      message: `Microphone access failed (${name || 'Error'}): ${message || 'Unable to initialize audio input device.'}`,
+      state: 'prompt',
+    };
+  }
+
+  /**
+   * Start listening only after explicit user interaction (e.g. button click)
    */
   public async startListening(
     language: string,
     callbacks: SpeechRecognitionCallbacks
   ): Promise<boolean> {
+    // Prevent multiple concurrent acquisition attempts
+    if (this.isAcquiring) {
+      console.warn('Microphone acquisition already in progress, ignoring duplicate call');
+      return false;
+    }
+
+    this.isAcquiring = true;
     this.stopSpeaking();
     this.cleanupAudio();
 
@@ -106,29 +370,50 @@ export class SpeechService {
     this.webSpeechReceivedText = false;
     this.recordedChunks = [];
 
-    // 1. Explicitly request microphone access to unlock browser permissions
+    // Check secure context first
+    if (!isSecureContext()) {
+      this.isAcquiring = false;
+      callbacks.onError?.('Microphone access requires a secure context (HTTPS or http://localhost).');
+      return false;
+    }
+
+    // Check embedded iframe policy
+    if (isRunningInIframe() && !isMicrophoneAllowedByIframePolicy()) {
+      this.isAcquiring = false;
+      callbacks.onError?.('Microphone is blocked by the embedded container. Open Mind Mirror AI in a standalone tab to speak with Pluto.');
+      return false;
+    }
+
+    // 1. Request microphone stream with device selection & fallback to { audio: true }
     if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
       try {
         callbacks.onStatus?.('Requesting microphone permission...');
-        this.mediaStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
-      } catch (permErr: any) {
-        console.warn('Microphone permission error:', permErr);
-        const name = permErr.name || '';
-        let userMessage = 'Microphone access failed.';
-        if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-          userMessage = 'Microphone permission was denied. Please allow microphone access in your browser address bar.';
-        } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-          userMessage = 'No microphone device was detected on your computer.';
-        } else if (name === 'NotReadableError' || name === 'TrackStartError') {
-          userMessage = 'Microphone is already in use by another application.';
+
+        // If specific device was selected by user, try that first
+        if (this.selectedDeviceId) {
+          try {
+            this.mediaStream = await navigator.mediaDevices.getUserMedia({
+              audio: { deviceId: { exact: this.selectedDeviceId } },
+            });
+          } catch (deviceConstraintErr) {
+            console.warn('Specific deviceId constraint failed, falling back to audio: true', deviceConstraintErr);
+            this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          }
+        } else {
+          // Standard resilient constraint
+          this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         }
-        callbacks.onError?.(userMessage);
+
+        this.lastKnownPermissionState = 'granted';
+        this.notifyPermissionListeners('granted');
+      } catch (permErr: any) {
+        console.warn('Microphone acquisition error:', permErr);
+        const { message, state } = this.categorizeMediaError(permErr);
+        this.lastKnownPermissionState = state;
+        this.notifyPermissionListeners(state);
+        callbacks.onError?.(message);
+        this.cleanupAudio();
+        this.isAcquiring = false;
         return false;
       }
     }
@@ -164,7 +449,7 @@ export class SpeechService {
       }
     }
 
-    // 3. Setup concurrent MediaRecorder fallback
+    // 3. Setup concurrent MediaRecorder fallback for Gemini transcription if Web Speech is silent/unavailable
     if (this.mediaStream && typeof MediaRecorder !== 'undefined') {
       try {
         const mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg', ''];
@@ -178,13 +463,13 @@ export class SpeechService {
           }
         };
 
-        this.mediaRecorder.start(250); // collect 250ms chunks
+        this.mediaRecorder.start(250);
       } catch (recErr) {
         console.warn('MediaRecorder buffer setup skipped:', recErr);
       }
     }
 
-    // 4. Setup Web Speech Recognition if available
+    // 4. Setup Web Speech Recognition if available in the browser
     const SpeechRecognition = typeof window !== 'undefined'
       ? (window.SpeechRecognition || window.webkitSpeechRecognition)
       : null;
@@ -201,6 +486,7 @@ export class SpeechService {
 
         rec.onstart = () => {
           this.isListening = true;
+          this.isAcquiring = false;
           callbacks.onStart?.();
         };
 
@@ -227,25 +513,37 @@ export class SpeechService {
 
         rec.onerror = (event: any) => {
           const errCode = event?.error || '';
-          console.warn('Web Speech recognition event error:', errCode);
+          console.warn('Web Speech recognition event notice:', errCode);
+
           if (errCode === 'no-speech') {
-            // Natural silence pause; do not terminate session
+            callbacks.onStatus?.('No speech detected. Speak clearly into your microphone.');
             return;
           }
+
           if (errCode === 'network') {
-            // Google Web Speech server unreachable in current environment; fallback handles it
-            callbacks.onStatus?.('Web Speech network paused — voice recorder active');
+            callbacks.onStatus?.('Speech recognition network paused — Pluto voice recorder is active.');
             return;
           }
-          if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
-            callbacks.onError?.('Microphone access blocked. Please allow microphone in browser settings.');
+
+          if (errCode === 'audio-capture') {
+            callbacks.onError?.('Audio capture failed. Ensure your microphone is plugged in and working.');
             this.stopListening();
+            return;
+          }
+
+          if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
+            callbacks.onError?.('Speech recognition service permission blocked. Allow microphone in browser settings or retry.');
+            this.stopListening();
+            return;
+          }
+
+          if (errCode === 'language-not-supported') {
+            callbacks.onStatus?.('Speech model for this language is processing via Pluto AI transcription.');
             return;
           }
         };
 
         rec.onend = () => {
-          // If the recognition ended but the user is still in listening mode, check if we need to finish
           if (this.isListening && this.webSpeechReceivedText && this.latestTranscript) {
             callbacks.onResult?.(this.latestTranscript, true);
           }
@@ -256,12 +554,14 @@ export class SpeechService {
         webSpeechStarted = true;
         this.isListening = true;
       } catch (recStartErr) {
-        console.warn('Web Speech API could not start directly, using audio recorder fallback:', recStartErr);
+        console.warn('Web Speech API start note:', recStartErr);
       }
     }
 
+    this.isAcquiring = false;
+
     if (!webSpeechStarted && this.mediaRecorder) {
-      // Running pure audio recorder mode (e.g. Firefox or when Web Speech is unsupported)
+      // Pure audio recorder fallback active (e.g. Firefox)
       this.isListening = true;
       callbacks.onStart?.();
       callbacks.onStatus?.('Listening... Speak naturally');
@@ -272,7 +572,6 @@ export class SpeechService {
       return true;
     }
 
-    // Neither Web Speech nor MediaRecorder could start
     callbacks.onError?.('Voice input is not supported in this browser. Please use Chrome, Edge, Safari, or Firefox.');
     this.cleanupAudio();
     return false;
@@ -283,13 +582,18 @@ export class SpeechService {
    */
   public async stopListening(): Promise<string> {
     this.isListening = false;
+    this.isAcquiring = false;
 
     // Stop Web Speech
     if (this.recognition) {
       try {
+        this.recognition.onstart = null;
+        this.recognition.onresult = null;
+        this.recognition.onerror = null;
+        this.recognition.onend = null;
         this.recognition.stop();
       } catch (e) {
-        // Ignore
+        // Safe catch
       }
       this.recognition = null;
     }
@@ -314,7 +618,7 @@ export class SpeechService {
           }
         });
       } catch (e) {
-        // Ignore
+        // Safe catch
       }
     }
 
@@ -327,7 +631,7 @@ export class SpeechService {
       return finalResult;
     }
 
-    // If Web Speech didn't capture text (e.g. In Firefox or network error), transcribe via server Gemini
+    // If Web Speech didn't capture text, transcribe via server Gemini
     if (this.recordedChunks.length > 0) {
       try {
         this.activeCallbacks?.onStatus?.('Transcribing audio with Gemini...');
@@ -375,12 +679,18 @@ export class SpeechService {
     return fallbackText || this.latestTranscript;
   }
 
-  private cleanupAudio(): void {
+  /**
+   * Release microphone tracks and hardware resources completely
+   */
+  public cleanupAudio(): void {
     if (this.mediaStream) {
       try {
-        this.mediaStream.getTracks().forEach((track) => track.stop());
+        this.mediaStream.getTracks().forEach((track) => {
+          track.stop();
+          track.enabled = false;
+        });
       } catch (e) {
-        // Ignore
+        // Safe catch
       }
       this.mediaStream = null;
     }
@@ -389,7 +699,7 @@ export class SpeechService {
       try {
         this.audioContext.close();
       } catch (e) {
-        // Ignore
+        // Safe catch
       }
       this.audioContext = null;
     }
@@ -402,6 +712,8 @@ export class SpeechService {
     this.mediaRecorder = null;
     this.recordedChunks = [];
     this.analyser = null;
+    this.isListening = false;
+    this.isAcquiring = false;
   }
 
   public getCurrentUtterance(): SpeechSynthesisUtterance | null {
@@ -437,32 +749,54 @@ export class SpeechService {
 
     // Choose female voice matching language if available
     const voices = window.speechSynthesis.getVoices();
-    const targetLangCode = language.replace('_', '-');
-    const exactLangVoices = voices.filter(
-      (v) => v.lang.toLowerCase() === targetLangCode.toLowerCase() || v.lang.toLowerCase().startsWith(targetLangCode.slice(0, 2).toLowerCase())
+    const targetLangCode = language.replace('_', '-').toLowerCase();
+    const primaryCode = targetLangCode.split('-')[0];
+
+    // Find voices matching the target language
+    let candidateVoices = voices.filter(
+      (v) => v.lang.toLowerCase() === targetLangCode || v.lang.toLowerCase().startsWith(primaryCode)
     );
 
-    // Prefer female voice identifiers
-    const femaleVoice = exactLangVoices.find((v) => {
+    // If Kannada is selected and browser lacks a designated 'kn' voice, fall back gracefully to Indic / multilingual voices
+    if (candidateVoices.length === 0 && primaryCode === 'kn') {
+      candidateVoices = voices.filter(
+        (v) =>
+          v.name.toLowerCase().includes('kannada') ||
+          v.lang.toLowerCase().includes('in') ||
+          v.name.toLowerCase().includes('india') ||
+          v.lang.toLowerCase().startsWith('hi')
+      );
+    }
+
+    if (candidateVoices.length === 0) {
+      candidateVoices = voices;
+    }
+
+    // Prefer high-quality female voice identifiers
+    const femaleVoice = candidateVoices.find((v) => {
       const n = v.name.toLowerCase();
       return (
         n.includes('female') ||
         n.includes('natural') ||
         n.includes('zira') ||
         n.includes('samantha') ||
+        n.includes('ava') ||
+        n.includes('jenny') ||
+        n.includes('sonia') ||
+        n.includes('victoria') ||
         n.includes('kore') ||
         n.includes('swara') ||
         n.includes('kalpana') ||
         n.includes('shruti') ||
-        n.includes('victoria') ||
-        n.includes('google')
+        n.includes('sapna') ||
+        (n.includes('google') && !n.includes('male'))
       );
     });
 
     if (femaleVoice) {
       utterance.voice = femaleVoice;
-    } else if (exactLangVoices.length > 0) {
-      utterance.voice = exactLangVoices[0];
+    } else if (candidateVoices.length > 0) {
+      utterance.voice = candidateVoices[0];
     }
 
     utterance.onstart = () => {

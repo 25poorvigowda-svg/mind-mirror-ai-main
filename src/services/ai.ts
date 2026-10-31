@@ -220,46 +220,79 @@ export function detectEmotion(text: string): EmotionType {
 }
 
 function getLocalFallbackReply(userText: string, lang: AppLanguage, name = 'there'): string {
-  const lower = userText.toLowerCase();
+  const lower = userText.toLowerCase().trim();
   const shortName = name.split(' ')[0] || 'there';
 
-  if (lang === 'kn-IN') {
+  // Kannada conversations
+  if (lang === 'kn-IN' || /[\u0C80-\u0CFF]/.test(userText)) {
+    if (lower.includes('ಹೆಂಗಿದ್ದೀಯಾ') || lower.includes('ಹೇಗಿದ್ದೀರಾ') || lower.includes('hegid') || lower.includes('hengiddiya')) {
+      return 'ಹೂ, ನಾನು ಚೆನ್ನಾಗಿದ್ದೀನಿ! ನೀನೇನು ಮಾಡ್ತಿದ್ದೀಯಾ?';
+    }
+    if (lower.includes('ನಮಸ್ಕಾರ') || lower.includes('namaskara') || lower.includes('hi') || lower.includes('hello')) {
+      return `ನಮಸ್ಕಾರ ${shortName}! ಇಂದು ನಿಮ್ಮ ದಿನ ಹೇಗಿದೆ?`;
+    }
+    if (lower.includes('ಸುಸ್ತು') || lower.includes('tired') || lower.includes('ಆಯಾಸ')) {
+      return `ಓಹ್ ಹೌದಾ? ತುಂಬಾ ಕೆಲಸವಿತ್ತಾ ಇಂದು? ಏನಾಯಿತು ಹೇಳಿ?`;
+    }
+    if (lower.includes('ಖುಷಿ') || lower.includes('happy') || lower.includes('ಸಂತೋಷ')) {
+      return 'ತುಂಬಾ ಒಳ್ಳೆಯ ವಿಷಯ! ಏನು ವಿಶೇಷ? ಹೇಳಿ ನನಗೂ ತಿಳಿಯಲಿ!';
+    }
+    if (lower.includes('ಒಂಟಿ') || lower.includes('lonely')) {
+      return 'ನಾನು ಇಲ್ಲಿದ್ದೇನೆ ನಿಮ್ಮ ಮಾತು ಕೇಳಲು. ನಿಮ್ಮ ಮನಸ್ಸಿನಲ್ಲಿ ಏನು ನಡೆಯುತ್ತಿದೆ ಎಂದು ಹಂಚಿಕೊಳ್ಳಲು ಬಯಸುವಿರಾ?';
+    }
     if (lower.includes('exam') || lower.includes('study') || lower.includes('ಓದು') || lower.includes('ಪರೀಕ್ಷೆ')) {
-      return `ನಮಸ್ಕಾರ ${shortName}! ಪರೀಕ್ಷೆಯ ದಿನಗಳಲ್ಲಿ ಮಾನಸಿಕ ಒತ್ತಡ ಹೆಚ್ಚಾಗುವುದು ಸಾಮಾನ್ಯ. ಆದರೆ ನೆನಪಿಡಿ: ಸತತವಾಗಿ ಆಯಾಸಪಟ್ಟು ಓದುವುದಕ್ಕಿಂತ, 25 ನಿಮಿಷಗಳ ಕೇಂದ್ರೀಕೃತ ಪೊಮೊಡೊರೊ (Pomodoro) ಸ್ಪ್ರಿಂಟ್ ಹೆಚ್ಚು ನೆನಪು ಉಳಿಸುತ್ತದೆ. ಯಾವ ವಿಷಯದಲ್ಲಿ ನಿಮಗೆ ಹೆಚ್ಚು ಒತ್ತಡ ಅನಿಸುತ್ತಿದೆ?`;
+      return `ನಮಸ್ಕಾರ ${shortName}! ಪರೀಕ್ಷೆಯ ದಿನಗಳಲ್ಲಿ ಮಾನಸಿಕ ಒತ್ತಡ ಹೆಚ್ಚಾಗುವುದು ಸಾಮಾನ್ಯ. ಆದರೆ ನೆನಪಿಡಿ: 25 ನಿಮಿಷಗಳ ಕೇಂದ್ರೀಕೃತ ಪೊಮೊಡೊರೊ ಸ್ಪ್ರಿಂಟ್ ಹೆಚ್ಚು ನೆನಪು ಉಳಿಸುತ್ತದೆ. ಯಾವ ವಿಷಯದಲ್ಲಿ ನಿಮಗೆ ಹೆಚ್ಚು ಒತ್ತಡ ಅನಿಸುತ್ತಿದೆ?`;
     }
-    if (lower.includes('sleep') || lower.includes('tired') || lower.includes('ನಿದ್ದೆ') || lower.includes('ಸುಸ್ತು')) {
-      return `ನಿಮಗೆ ತುಂಬಾ ಆಯಾಸವಾಗಿದೆ ಎಂದು ನಾನು ಅರ್ಥಮಾಡಿಕೊಂಡಿದ್ದೇನೆ, ${shortName}. ದೇಹಕ್ಕೆ ಸಾಕಷ್ಟು ನಿದ್ರೆ ಸಿಗದಿದ್ದಾಗ ಓದಿನ ಮೇಲೆ ಗಮನ ಇಡುವುದು ಕಷ್ಟ. ಈಗಲೇ 10 ನಿಮಿಷಗಳ ಕಾಲ ಪರದೆಯಿಂದ (screen) ದೂರವಿದ್ದು ವಿಶ್ರಾಂತಿ ಪಡೆಯಲು ಸಾಧ್ಯವೇ?`;
-    }
-    if (lower.includes('stress') || lower.includes('ಒತ್ತಡ') || lower.includes('tension')) {
-      return `ಒಮ್ಮೆ ನಿಧಾನವಾಗಿ ದೀರ್ಘ ಉಸಿರು ತೆಗೆದುಕೊಳ್ಳಿ, ${shortName}. ಎಲ್ಲವನ್ನೂ ಒಟ್ಟಿಗೆ ನಿಭಾಯಿಸಲು ಹೋದಾಗ ಭಯವಾಗುವುದು ಸಹಜ. ಇಂದಿನ ನಿಮ್ಮ ಅತ್ಯಂತ ಮುಖ್ಯವಾದ ಒಂದೇ ಒಂದು ಕೆಲಸ ಯಾವುದು?`;
-    }
-    return `ನಮಸ್ಕಾರ ${shortName}! ನಾನು ಪ್ಲೂಟೋ (Pluto), ನಿಮ್ಮ 3D AI ಸಂಗಾತಿ. ನಿಮ್ಮ ಅಧ್ಯಯನ, ನಿದ್ರೆ ಮತ್ತು ಮಾನಸಿಕ ನೆಮ್ಮದಿಯನ್ನು ಕಾಪಾಡಿಕೊಳ್ಳಲು ನಾನು ಇಲ್ಲಿದ್ದೇನೆ. ಇಂದು ನೀವು ಹೇಗೆ ಭಾವಿಸುತ್ತಿದ್ದೀರಿ?`;
+    return `ನಮಸ್ಕಾರ ${shortName}! ನಾನು ಪ್ಲೂಟೋ, ನಿಮ್ಮ 3D ಸಂಗಾತಿ. ಇಂದು ನೀವು ಹೇಗೆ ಭಾವಿಸುತ್ತಿದ್ದೀರಿ?`;
   }
 
-  if (lang === 'hi-IN') {
+  // Hindi conversations
+  if (lang === 'hi-IN' || /[\u0900-\u097F]/.test(userText)) {
+    if (lower.includes('kaise ho') || lower.includes('कैसे हो') || lower.includes('कैसी हो') || lower.includes('kya haal')) {
+      return 'हाँ, मैं बिल्कुल ठीक हूँ! आप क्या कर रहे हैं आज?';
+    }
+    if (lower.includes('namaste') || lower.includes('नमस्ते') || lower.includes('hi') || lower.includes('hello')) {
+      return `नमस्ते ${shortName}! आज आपका दिन कैसा चल रहा है?`;
+    }
+    if (lower.includes('थका') || lower.includes('tired') || lower.includes('थकान')) {
+      return 'अरे सच में? क्या बहुत लंबा दिन था? कुछ हुआ क्या?';
+    }
+    if (lower.includes('खुश') || lower.includes('happy') || lower.includes('अच्छा लग रहा')) {
+      return 'वाह, यह तो बहुत अच्छी बात है! क्या हुआ? मुझे भी बताइए!';
+    }
+    if (lower.includes('अकेला') || lower.includes('lonely') || lower.includes('अकेलापन')) {
+      return 'मैं हमेशा आपके साथ हूँ। क्या आप बताना चाहेंगे कि आपके मन में क्या चल रहा है?';
+    }
     if (lower.includes('exam') || lower.includes('study') || lower.includes('पढ़ाई') || lower.includes('परीक्षा')) {
-      return `नमस्ते ${shortName}! परीक्षा का तनाव बहुत भारी महसूस हो सकता है। पर याद रखें: 2 AM तक तनाव में पढ़ाई करने से बेहतर है कि आप 25 मिनट के छोटे, केंद्रित पोमोडोरो स्प्रिंट में पढ़ाई करें। किस विषय को लेकर आपको सबसे ज्यादा फिक्र है?`;
+      return `नमस्ते ${shortName}! परीक्षा का तनाव बहुत भारी महसूस हो सकता है। पर याद रखें: 25 मिनट के छोटे, केंद्रित पोमोडोरो स्प्रिंट में पढ़ाई करें। किस विषय को लेकर आपको सबसे ज्यादा फिक्र है?`;
     }
-    if (lower.includes('sleep') || lower.includes('tired') || lower.includes('नींद') || lower.includes('थका')) {
-      return `मैं आपकी थकान को समझ सकती हूँ, ${shortName}। जब शरीर की बैटरी कम हो, तो इच्छाशक्ति काम नहीं करती। क्या आप अभी 15 मिनट के लिए स्क्रीन से दूर जाकर थोड़ा पानी पी सकते हैं?`;
-    }
-    if (lower.includes('stress') || lower.includes('तनाव') || lower.includes('घबराहट')) {
-      return `गहरी सांस लें, ${shortName}। तनाव तब बढ़ता है जब हम एक साथ कई भविष्य की समस्याओं को हल करने लगते हैं। अगर आज सिर्फ एक काम पूरा करना हो, तो आपको सबसे ज्यादा सुकून किसमें मिलेगा?`;
-    }
-    return `नमस्ते ${shortName}! मैं प्लूटो (Pluto) हूँ, आपकी 3D साथी। मैं आपकी पढ़ाई, नींद और दिनचर्या को संतुलित रखने में मदद के लिए यहाँ हूँ। आज आपके मन में क्या चल रहा है?`;
+    return `नमस्ते ${shortName}! मैं प्लूटो हूँ, आपकी साथी। आज आपके मन में क्या चल रहा है?`;
   }
 
-  // English
-  if (lower.includes('exam') || lower.includes('midterm') || lower.includes('finals') || lower.includes('test')) {
-    return `I completely understand that pressure, ${shortName}. Exam season creates an overwhelming background hum where you never feel truly off the clock. But cognitive retention actually consolidifies during deep rest, not during 2 AM panic cramming. Which specific subject or assignment is feeling heaviest right now?`;
+  // English conversations
+  if (/^(hi|hello|hey|good morning|good afternoon|good evening)\b/i.test(lower) || lower === 'hi pluto!' || lower === 'hi pluto' || lower === 'hey pluto') {
+    return 'Hey! How are you doing today?';
   }
-  if (lower.includes('tired') || lower.includes('sleep') || lower.includes('exhaust') || lower.includes('drained')) {
-    return `That fatigue is very real, ${shortName}. When your brain feels like it is moving through thick fog, it isn't laziness—it's your physiology asking for an honest recharge. Can you give yourself permission for a 15-minute screen-free reset right now?`;
+  if (lower.includes('feeling a little tired') || lower.includes('feel tired') || lower.includes('so tired') || lower.includes('exhausted') || lower.includes("i'm tired")) {
+    return 'Oh really? Was it a long day? Did something happen?';
+  }
+  if (lower.includes("i'm happy") || lower.includes('im happy') || lower.includes('feeling happy') || lower.includes('great day') || lower.includes('wonderful day')) {
+    return "That's lovely! What happened? Tell me!";
+  }
+  if (lower.includes('feel lonely') || lower.includes('feeling lonely') || lower.includes('so lonely') || lower.includes('i feel alone') || lower.includes('lonely')) {
+    return "I'm here to listen. Do you want to talk about what's been on your mind?";
   }
   if (lower.includes('stress') || lower.includes('anxious') || lower.includes('overwhelm')) {
     return `Take a slow, deep breath with me right now, ${shortName}. Overwhelm happens when our mind tries to solve twenty future deadlines all at once. If you could only move the needle on ONE single thing today, what would give you the most relief?`;
   }
-  return `I'm right here with you, ${shortName}. Student life has so many competing demands, and it's easy to lose touch with how your mind and body are actually doing. What's on your mind today—do you want help structuring your study blocks, or do you just need a safe space to debrief?`;
+  if (lower.includes('exam') || lower.includes('midterm') || lower.includes('finals') || lower.includes('test')) {
+    return `I completely understand that pressure, ${shortName}. Exam season creates an overwhelming background hum. But cognitive retention actually consolidates during deep rest, not during 2 AM panic cramming. Which specific subject or assignment is feeling heaviest right now?`;
+  }
+  if (lower.includes('joke') || lower.includes('funny') || lower.includes('laugh')) {
+    return "Why did the neural network go to school? To improve its latent talents and stop overfitting on textbooks!";
+  }
+
+  return `I'm right here with you, ${shortName}. Student life has so many competing demands, and it's easy to lose touch with how your mind and body are actually doing. What's on your mind today?`;
 }
 
 function getDefaultFollowUps(lang: AppLanguage): string[] {

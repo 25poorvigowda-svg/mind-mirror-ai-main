@@ -59,6 +59,7 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
 
   // Voice dictation state
   const [isDictating, setIsDictating] = useState(false);
+  const [dictationError, setDictationError] = useState<string | null>(null);
   const [voiceSupported, setVoiceSupported] = useState(true);
 
   useEffect(() => {
@@ -108,6 +109,7 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
   };
 
   const toggleVoiceDictation = async () => {
+    setDictationError(null);
     if (isDictating) {
       setIsDictating(false);
       const text = await speechService.stopListening();
@@ -122,7 +124,10 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
             setJournal((prev) => (prev ? `${prev} ${text.trim()}` : text.trim()));
           }
         },
-        onError: () => setIsDictating(false),
+        onError: (err) => {
+          setIsDictating(false);
+          setDictationError(err);
+        },
         onEnd: () => setIsDictating(false),
       });
       if (!started) setIsDictating(false);
@@ -462,6 +467,18 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
               placeholder="What challenged or inspired you today? (e.g., 'Stayed up late studying for midterm, drank 2 energy drinks and had trouble falling asleep...')"
               className="w-full bg-slate-950 border border-slate-700 rounded-2xl p-3.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500 leading-relaxed"
             />
+            {dictationError && (
+              <div className="flex items-center justify-between text-xs text-rose-300 bg-rose-950/70 border border-rose-500/40 p-2.5 rounded-xl">
+                <span>{dictationError}</span>
+                <button
+                  type="button"
+                  onClick={() => setDictationError(null)}
+                  className="text-xs text-rose-400 hover:text-white underline cursor-pointer ml-2"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
           </div>
 
           {/* 7. Optional Tasks & Deadlines */}

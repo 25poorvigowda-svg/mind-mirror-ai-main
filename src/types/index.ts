@@ -122,8 +122,20 @@ export interface UserSettings {
   disclaimerAcknowledged: boolean;
 }
 
+export interface ConversationSession {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  preview: string;
+  messageCount: number;
+  language: AppLanguage;
+  emotion: EmotionType;
+}
+
 export interface ChatMessage {
   id: string;
+  sessionId?: string;
   sender: 'user' | 'assistant';
   text: string;
   timestamp: number;

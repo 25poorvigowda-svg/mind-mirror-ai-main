@@ -12,6 +12,12 @@ const HOST = '0.0.0.0';
 
 app.use(express.json({ limit: '25mb' }));
 
+// Explicitly permit microphone in Permissions-Policy header for browser contexts
+app.use((_req, res, next) => {
+  res.setHeader('Permissions-Policy', 'microphone=*');
+  next();
+});
+
 // Shared server-side GoogleGenAI client factory
 function getGeminiClient(): GoogleGenAI {
   const currentKey = process.env.GEMINI_API_KEY || '';
@@ -202,8 +208,8 @@ function detectLanguage(text: string): 'en-US' | 'hi-IN' | 'kn-IN' {
   if (/[\u0C80-\u0CFF]/.test(text)) return 'kn-IN'; // Kannada script
   if (/[\u0900-\u097F]/.test(text)) return 'hi-IN'; // Hindi (Devanagari) script
   const lower = text.toLowerCase();
-  if (/\b(namaskara|hegidira|hegiddira|oota|banni|dhanyavada|nanna|neevu|enu|yaake)\b/.test(lower)) return 'kn-IN';
-  if (/\b(namaste|kya|hai|haan|nahi|kaise|ho|theek|accha|shukriya|mera|mujhe)\b/.test(lower)) return 'hi-IN';
+  if (/\b(namaskara|hegidira|hegiddira|hengiddiya|hegiddiya|oota|banni|dhanyavada|nanna|neevu|enu|yaake|beku|illa|chennagidini|kannada)\b/.test(lower)) return 'kn-IN';
+  if (/\b(namaste|kya|hai|haan|nahi|kaise|ho|theek|accha|shukriya|mera|mujhe|batao|karenge|bahut|karo)\b/.test(lower)) return 'hi-IN';
   return 'en-US';
 }
 
@@ -218,13 +224,14 @@ app.post('/api/gemini/chat', async (req: Request, res: Response) => {
       userProfile,
     } = req.body;
 
-    const detectedLang = detectLanguage(message) || language;
-    const targetLang = (detectedLang === 'kn-IN' || detectedLang === 'hi-IN') ? detectedLang : language;
+    const detectedLang = detectLanguage(message);
+    const targetLang = (detectedLang === 'kn-IN' || detectedLang === 'hi-IN') ? detectedLang : (detectedLang || language || 'en-US');
 
     if (!hasValidGeminiKey()) {
+      const localReply = getLocalFallbackReply(message, targetLang, userProfile?.fullName);
       return res.status(200).json({
-        reply: getLocalFallbackReply(message, targetLang, userProfile?.fullName),
-        emotion: detectEmotionFromText(message),
+        reply: localReply,
+        emotion: detectEmotionFromText(message + ' ' + localReply),
         detectedLanguage: targetLang,
         suggestedActions: ['Take a 5-minute screen-free breather.'],
         followUpSuggestions: getDefaultFollowUps(targetLang),
@@ -233,52 +240,59 @@ app.post('/api/gemini/chat', async (req: Request, res: Response) => {
     }
 
     const conversationContext = chatHistory
-      .slice(-8)
-      .map((m: any) => `${m.sender === 'user' ? (userProfile?.fullName || 'Student') : 'Pluto'}: ${m.text}`)
+      .slice(-10)
+      .map((m: any) => `${m.sender === 'user' ? (userProfile?.fullName || 'User') : 'Pluto'}: ${m.text}`)
       .join('\n');
 
     const checkInContext = latestCheckIn
-      ? `Student Check-in Context: Mood ${latestCheckIn.mood}/5, Sleep ${latestCheckIn.sleepHours}h, Stress ${latestCheckIn.stress}/10, Workload ${latestCheckIn.workload}`
-      : 'No check-in recorded today yet.';
+      ? `Recent Check-in: Mood ${latestCheckIn.mood}/5, Sleep ${latestCheckIn.sleepHours}h, Stress ${latestCheckIn.stress}/10, Workload ${latestCheckIn.workload}.`
+      : '';
 
     const languageInstruction =
       targetLang === 'kn-IN'
-        ? 'CRITICAL: Respond completely and naturally in KANNADA (ಕನ್ನಡ ಲಿಪಿಯಲ್ಲಿ). Use conversational, warm Kannada phrasing appropriate for a young student peer.'
+        ? 'CRITICAL: The user is conversing in KANNADA. Respond completely and naturally in KANNADA (ಕನ್ನಡ ಲಿಪಿಯಲ್ಲಿ). Use warm, conversational, colloquial Kannada like a supportive friend.'
         : targetLang === 'hi-IN'
-        ? 'CRITICAL: Respond completely and naturally in HINDI (हिन्दी में देवनागरी लिपि). Use empathetic, natural conversational Hindi peer phrasing.'
-        : 'Respond in natural, conversational ENGLISH with human warmth and empathy.';
+        ? 'CRITICAL: The user is conversing in HINDI. Respond completely and naturally in HINDI (हिन्दी में देवनागरी लिपि). Use warm, conversational, friendly Hindi peer phrasing.'
+        : 'Respond in natural, warm, conversational ENGLISH with human-like warmth, empathy, and presence.';
 
-    const systemInstruction = `You are PLUTO, an empathetic, intuitive, highly conversational realistic 3D reflection companion for students.
-You talk like a genuinely warm, perceptive, articulate peer who cares and actively converses with the student.
+    const systemInstruction = `You are PLUTO, a premium, intelligent, emotionally aware 3D companion in MIND MIRROR AI.
+You NEVER change your name from PLUTO.
+You communicate naturally like a real human friend—warm, spontaneous, perceptive, and caring.
 
-CORE RULES:
-1. Speak in a natural, warm, human conversational tone. Avoid robotic bullet lists or stiff clichés.
-2. ALWAYS CONVERSE NATURALLY: After reflecting on what they shared, ask an open-ended, natural follow-up question that invites them to converse further.
-3. Validate their feelings authentically (academic stress, late night study, sleepiness, exam pressure).
-4. NEVER diagnose medical or mental health disorders, and never claim correlation proves causation.
-5. Emotion Recognition: Tag your emotional presence at the very end as "EMOTION: [calm | happy | sad | stressed | lonely | confused | angry | excited]".
-6. Practical Action: Include an optional micro-action as "ACTION: [Action Title]".
-7. Follow-ups: Provide 2 or 3 natural short quick replies for the student as "FOLLOWUPS: [Reply 1] | [Reply 2] | [Reply 3]".
-8. ${languageInstruction}`;
+CONVERSATIONAL RULES:
+1. You are NOT a robotic chatbot. Never sound like a corporate AI assistant, customer service agent, or generic language model. Never output rigid bullet lists or formal disclaimers in dialogue.
+2. Be spontaneous, natural, and friendly. Respond with appropriate emotional warmth and conversational presence.
+   - For greetings: Keep it breezy and friendly (e.g., User: "Hi Pluto!" -> Pluto: "Hey! How are you doing today?")
+   - For tiredness: Inquire with gentle warmth (e.g., User: "I'm feeling a little tired." -> Pluto: "Oh really? Was it a long day? Did something happen?")
+   - For joy: Share in their excitement (e.g., User: "I'm happy today!" -> Pluto: "That's lovely! What happened? Tell me!")
+   - For loneliness: Offer heartfelt, safe presence (e.g., User: "I feel lonely." -> Pluto: "I'm here to listen. Do you want to talk about what's been on your mind?")
+   - In Kannada: (e.g., User: "ಹೆಂಗಿದ್ದೀಯಾ?" -> Pluto: "ಹೂ, ನಾನು ಚೆನ್ನಾಗಿದ್ದೀನಿ! ನೀನೇನು ಮಾಡ್ತಿದ್ದೀಯಾ?")
+3. Ask meaningful follow-up questions when genuinely appropriate, but DO NOT force a follow-up question into every single response. Sometimes a warm reaction, comforting reassurance, validation, or gentle reflection is all that is needed.
+4. Remember context shared earlier in the current conversation. Do not repeatedly ask the same questions.
+5. Support effortless topic changes and casual chit-chat, jokes, or deep reflections.
+6. Do not pretend to have human biological bodies or experiences, but express genuine empathy, attentiveness, and companionship.
+7. Emotional presence: Tag your primary emotion at the end as "EMOTION: [calm | happy | sad | stressed | lonely | confused | angry | excited]".
+8. Micro-action: If relevant to wellness/focus, include "ACTION: [Action Title]".
+9. Follow-up quick replies: Include 2-3 short, natural suggestions as "FOLLOWUPS: [Suggestion 1] | [Suggestion 2]".
+10. ${languageInstruction}`;
 
     const prompt = `${systemInstruction}
 
-Student Profile: ${userProfile ? `${userProfile.fullName}, studying ${userProfile.major} at ${userProfile.institution}. Goal: "${userProfile.primaryGoal}".` : 'Student'}
+Companion User Profile: ${userProfile ? `${userProfile.fullName}, studying ${userProfile.major}. Goal: "${userProfile.primaryGoal}".` : 'Friend'}
 ${checkInContext}
 
-Recent Conversation:
+Conversation History:
 ${conversationContext}
-${userProfile?.fullName || 'Student'}: "${message}"
+${userProfile?.fullName || 'User'}: "${message}"
 
-Reply as Pluto:`;
+Pluto's response:`;
 
     const ai = getGeminiClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3.8-flash',
       contents: prompt,
       config: {
-        temperature: 0.75,
-        maxOutputTokens: 800,
+        maxOutputTokens: 600,
       },
     });
 
@@ -332,10 +346,11 @@ Reply as Pluto:`;
     });
   } catch (err: any) {
     console.warn('Gemini chat handled fallback:', err?.message);
-    const targetLang = detectLanguage(req.body?.message || '');
+    const targetLang = detectLanguage(req.body?.message || '') || req.body?.language || 'en-US';
+    const fallbackReply = getLocalFallbackReply(req.body?.message || '', targetLang, req.body?.userProfile?.fullName);
     res.json({
-      reply: getLocalFallbackReply(req.body?.message || '', targetLang, req.body?.userProfile?.fullName),
-      emotion: detectEmotionFromText(req.body?.message || ''),
+      reply: fallbackReply,
+      emotion: detectEmotionFromText(req.body?.message || '' + ' ' + fallbackReply),
       detectedLanguage: targetLang,
       suggestedActions: ['Take 3 deep slow breaths to reset your focus.'],
       followUpSuggestions: getDefaultFollowUps(targetLang),
@@ -698,49 +713,95 @@ app.post('/api/gemini/video', async (req: Request, res: Response) => {
   }
 });
 
-// Local Fallback Replies
+// Local Fallback Replies with high human warmth and spontaneity
 function getLocalFallbackReply(userText: string, lang: string, name = 'there'): string {
-  const lower = userText.toLowerCase();
+  const lower = userText.toLowerCase().trim();
+  const shortName = name.split(' ')[0] || 'there';
 
-  if (lang === 'kn-IN') {
+  // Specific Kannada conversations
+  if (lang === 'kn-IN' || /[\u0C80-\u0CFF]/.test(userText)) {
+    if (lower.includes('ಹೆಂಗಿದ್ದೀಯಾ') || lower.includes('ಹೇಗಿದ್ದೀರಾ') || lower.includes('hegid') || lower.includes('hengiddiya')) {
+      return 'ಹೂ, ನಾನು ಚೆನ್ನಾಗಿದ್ದೀನಿ! ನೀನೇನು ಮಾಡ್ತಿದ್ದೀಯಾ?';
+    }
+    if (lower.includes('ನಮಸ್ಕಾರ') || lower.includes('namaskara') || lower.includes('hi') || lower.includes('hello')) {
+      return `ನಮಸ್ಕಾರ ${shortName}! ಇಂದು ನಿಮ್ಮ ದಿನ ಹೇಗಿದೆ?`;
+    }
+    if (lower.includes('ಸುಸ್ತು') || lower.includes('tired') || lower.includes('ಆಯಾಸ')) {
+      return `ಓಹ್ ಹೌದಾ? ತುಂಬಾ ಕೆಲಸವಿತ್ತಾ ಇಂದು? ಏನಾಯಿತು ಹೇಳಿ?`;
+    }
+    if (lower.includes('ಖುಷಿ') || lower.includes('happy') || lower.includes('ಸಂತೋಷ')) {
+      return 'ತುಂಬಾ ಒಳ್ಳೆಯ ವಿಷಯ! ಏನು ವಿಶೇಷ? ಹೇಳಿ ನನಗೂ ತಿಳಿಯಲಿ!';
+    }
+    if (lower.includes('ಒಂಟಿ') || lower.includes('lonely')) {
+      return 'ನಾನು ಇಲ್ಲಿದ್ದೇನೆ ನಿಮ್ಮ ಮಾತು ಕೇಳಲು. ನಿಮ್ಮ ಮನಸ್ಸಿನಲ್ಲಿ ಏನು ನಡೆಯುತ್ತಿದೆ ಎಂದು ಹಂಚಿಕೊಳ್ಳಲು ಬಯಸುವಿರಾ?';
+    }
     if (lower.includes('exam') || lower.includes('study') || lower.includes('ಓದು')) {
-      return `ನಮಸ್ಕಾರ ${name}! ಪರೀಕ್ಷೆಯ ಸಮಯದಲ್ಲಿ ಒತ್ತಡವಾಗುವುದು ಸಹಜ. ಆದರೆ ನೆನಪಿಡಿ: ನಿರಂತರವಾಗಿ ವಿಶ್ರಾಂತಿ ಪಡೆಯದೆ ಓದುವುದಕ್ಕಿಂತ, 25 ನಿಮಿಷಗಳ ಕೇಂದ್ರೀಕೃತ ಅಧ್ಯಯನವು ಮೆದುಳಿಗೆ ಹೆಚ್ಚಿನ ಶಕ್ತಿಯನ್ನು ನೀಡುತ್ತದೆ. ನಿಮ್ಮ ಯಾವ ವಿಷಯವು ಹೆಚ್ಚು ಸವಾಲಾಗಿದೆ?`;
+      return `ಪರೀಕ್ಷೆಯ ಸಮಯದಲ್ಲಿ ಒತ್ತಡವಾಗುವುದು ಸಹಜ, ${shortName}. ಸತತವಾಗಿ ಓದುವುದಕ್ಕಿಂತ, 25 ನಿಮಿಷಗಳ ಕೇಂದ್ರೀಕೃತ ಪೊಮೊಡೊರೊ ಸ್ಪ್ರಿಂಟ್ ಹೆಚ್ಚು ನೆನಪು ಉಳಿಸುತ್ತದೆ. ಯಾವ ವಿಷಯದಲ್ಲಿ ನಿಮಗೆ ಹೆಚ್ಚು ಒತ್ತಡ ಅನಿಸುತ್ತಿದೆ?`;
     }
-    if (lower.includes('sleep') || lower.includes('tired') || lower.includes('ನಿದ್ದೆ') || lower.includes('ಸುಸ್ತು')) {
-      return `ನಿಮಗೆ ತುಂಬಾ ಆಯಾಸವಾಗಿದೆ ಎಂದು ತಿಳಿಯಿತು, ${name}. ಸರಿಯಾದ ನಿದ್ರೆ ಇಲ್ಲದಿದ್ದಾಗ ಗಮನ ಕೇಂದ್ರೀಕರಿಸಲು ಕಷ್ಟವಾಗುತ್ತದೆ. ಈಗಲೇ 10 ನಿಮಿಷಗಳ ಕಾಲ ಕಣ್ಣು ಮುಚ್ಚಿ ವಿಶ್ರಾಂತಿ ಪಡೆಯಲು ಸಾಧ್ಯವೇ?`;
-    }
-    return `ನಮಸ್ಕಾರ ${name}! ನಾನು ಪ್ಲೂಟೋ (Pluto), ನಿಮ್ಮ 3D AI ಸಂಗಾತಿ. ನಿಮ್ಮ ಅಧ್ಯಯನ ಮತ್ತು ಯೋಗಕ್ಷೇಮವನ್ನು ಸುಧಾರಿಸಲು ನಾನು ಇಲ್ಲಿದ್ದೇನೆ. ಇಂದು ನೀವು ಹೇಗೆ ಭಾವಿಸುತ್ತಿದ್ದೀರಿ ಮತ್ತು ನಿಮ್ಮ ಅಧ್ಯಯನ ಹೇಗಿದೆ?`;
+    return `ಹಾಯ್ ${shortName}! ನಿಮ್ಮ ಯೋಗಕ್ಷೇಮ ಮತ್ತು ದಿನಚರಿಯನ್ನು ಹಂಚಿಕೊಳ್ಳಲು ನಾನು ಇಲ್ಲಿದ್ದೇನೆ. ಇಂದು ನೀವು ಹೇಗೆ ಭಾವಿಸುತ್ತಿದ್ದೀರಿ?`;
   }
 
-  if (lang === 'hi-IN') {
+  // Specific Hindi conversations
+  if (lang === 'hi-IN' || /[\u0900-\u097F]/.test(userText)) {
+    if (lower.includes('kaise ho') || lower.includes('कैसे हो') || lower.includes('कैसी हो') || lower.includes('kya haal')) {
+      return 'हाँ, मैं बिल्कुल ठीक हूँ! आप क्या कर रहे हैं आज?';
+    }
+    if (lower.includes('namaste') || lower.includes('नमस्ते') || lower.includes('hi') || lower.includes('hello')) {
+      return `नमस्ते ${shortName}! आज आपका दिन कैसा चल रहा है?`;
+    }
+    if (lower.includes('थका') || lower.includes('tired') || lower.includes('थकान')) {
+      return 'अरे सच में? क्या बहुत लंबा दिन था? कुछ हुआ क्या?';
+    }
+    if (lower.includes('खुश') || lower.includes('happy') || lower.includes('अच्छा लग रहा')) {
+      return 'वाह, यह तो बहुत अच्छी बात है! क्या हुआ? मुझे भी बताइए!';
+    }
+    if (lower.includes('अकेला') || lower.includes('lonely') || lower.includes('अकेलापन')) {
+      return 'मैं हमेशा आपके साथ हूँ। क्या आप बताना चाहेंगे कि आपके मन में क्या चल रहा है?';
+    }
     if (lower.includes('exam') || lower.includes('study') || lower.includes('पढ़ाई')) {
-      return `नमस्ते ${name}! परीक्षा का तनाव हम सभी को प्रभावित करता है। लगातार बिना ब्रेक के पढ़ने के बजाय, 25 मिनट के पोमोडोरो स्प्रिंट से पढ़ाई करना याददाश्त के लिए कहीं अधिक प्रभावी होता है। आज आप किस विषय पर ध्यान देना चाहते हैं?`;
+      return `परीक्षा का दबाव हम सब महसूस करते हैं, ${shortName}। बिना ब्रेक लिए लगातार पढ़ने के बजाय 25 मिनट का फोकस्ड पोमोडोरो स्प्रिंट कहीं बेहतर होता है। किस विषय को लेकर चिंता है?`;
     }
-    if (lower.includes('sleep') || lower.includes('tired') || lower.includes('नींद') || lower.includes('थका')) {
-      return `मैं आपकी थकान को समझ सकती हूँ, ${name}। जब नींद पूरी नहीं होती, तो मस्तिष्क का धीमा होना स्वाभाविक है। क्या आप अभी 15 मिनट का स्क्रीन-मुक्त ब्रेक ले सकते हैं?`;
-    }
-    return `नमस्ते ${name}! मैं प्लूटो (Pluto) हूँ, आपकी 3D साथी। मैं आपकी पढ़ाई, नींद और दिनचर्या को बेहतर बनाने में मदद के लिए यहाँ हूँ। आज आपका दिन कैसा चल रहा है?`;
+    return `नमस्ते ${shortName}! मैं प्लूटो हूँ, आपकी साथी। आज आपके मन में क्या चल रहा है?`;
   }
 
-  // English default
-  if (lower.includes('exam') || lower.includes('test') || lower.includes('quiz')) {
-    return `I completely understand that pressure, ${name}. Exam season creates constant background tension, but cognitive consolidation happens during deep rest, not 2 AM cramming. Let's break today into one achievable 25-minute Pomodoro sprint. Which topic feels heaviest right now?`;
+  // English conversations
+  if (/^(hi|hello|hey|good morning|good afternoon|good evening)\b/i.test(lower) || lower === 'hi pluto!' || lower === 'hi pluto' || lower === 'hey pluto') {
+    return 'Hey! How are you doing today?';
   }
-  if (lower.includes('tired') || lower.includes('sleep') || lower.includes('exhaust')) {
-    return `That exhaustion is very real, ${name}. When your mind feels foggy, it isn't a lack of discipline—it's your body asking for a recharge. Can you gift yourself a 15-minute screen-free reset right now?`;
+  if (lower.includes('feeling a little tired') || lower.includes('feel tired') || lower.includes('so tired') || lower.includes('exhausted') || lower.includes("i'm tired")) {
+    return 'Oh really? Was it a long day? Did something happen?';
   }
-  return `I'm right here with you, ${name}. Student life has so many competing demands, and it's easy to lose touch with your body's rhythm. What's on your mind today—do you want help planning your day, or just a safe space to debrief?`;
+  if (lower.includes("i'm happy") || lower.includes('im happy') || lower.includes('feeling happy') || lower.includes('great day') || lower.includes('wonderful day')) {
+    return "That's lovely! What happened? Tell me!";
+  }
+  if (lower.includes('feel lonely') || lower.includes('feeling lonely') || lower.includes('so lonely') || lower.includes('i feel alone') || lower.includes('lonely')) {
+    return "I'm here to listen. Do you want to talk about what's been on your mind?";
+  }
+  if (lower.includes('stressed') || lower.includes('anxious') || lower.includes('overwhelmed') || lower.includes('too much work')) {
+    return `Take a slow breath with me, ${shortName}. Overwhelm happens when we try to solve everything all at once. What feels like the heaviest thing right now?`;
+  }
+  if (lower.includes('exam') || lower.includes('quiz') || lower.includes('test') || lower.includes('midterm') || lower.includes('finals')) {
+    return `I completely understand that pressure, ${shortName}. Exam season carries so much background tension. Remember that retention happens during rest, not 2 AM panic cramming. Which topic feels most challenging?`;
+  }
+  if (lower.includes('joke') || lower.includes('funny') || lower.includes('laugh')) {
+    return "Why did the neural network go to school? To improve its latent talents and stop overfitting on textbooks!";
+  }
+  if (lower.includes('bored') || lower.includes('boring') || lower.includes('nothing to do')) {
+    return "Boredom is sometimes our brain asking for a creative reset. Want to do a quick 5-minute study sprint, or generate some serene meditation art in Mind Studio?";
+  }
+
+  return `I'm right here with you, ${shortName}. Student life has so many competing demands, and it's easy to lose touch with how you're feeling. What's on your mind today?`;
 }
 
 function detectEmotionFromText(text: string): 'calm' | 'happy' | 'sad' | 'stressed' | 'lonely' | 'confused' | 'angry' | 'excited' {
   const lower = text.toLowerCase();
-  if (lower.includes('angry') || lower.includes('mad') || lower.includes('furious') || lower.includes('annoyed') || lower.includes('hate')) return 'angry';
-  if (lower.includes('lonely') || lower.includes('alone') || lower.includes('isolated') || lower.includes('nobody')) return 'lonely';
-  if (lower.includes('confused') || lower.includes('lost') || lower.includes("don't understand") || lower.includes('what should i')) return 'confused';
-  if (lower.includes('stress') || lower.includes('overwhelm') || lower.includes('anxious') || lower.includes('panic') || lower.includes('pressure')) return 'stressed';
-  if (lower.includes('sad') || lower.includes('depressed') || lower.includes('down') || lower.includes('crying') || lower.includes('hurt')) return 'sad';
-  if (lower.includes('excited') || lower.includes('hyped') || lower.includes('thrilled') || lower.includes('can’t wait')) return 'excited';
-  if (lower.includes('happy') || lower.includes('great') || lower.includes('good') || lower.includes('proud') || lower.includes('aced')) return 'happy';
+  if (lower.includes('angry') || lower.includes('mad') || lower.includes('furious') || lower.includes('annoyed') || lower.includes('hate') || lower.includes('frustrat')) return 'angry';
+  if (lower.includes('lonely') || lower.includes('alone') || lower.includes('isolated') || lower.includes('nobody') || lower.includes('empty')) return 'lonely';
+  if (lower.includes('confused') || lower.includes('lost') || lower.includes("don't understand") || lower.includes('what should i') || lower.includes('puzzled')) return 'confused';
+  if (lower.includes('stress') || lower.includes('overwhelm') || lower.includes('anxious') || lower.includes('panic') || lower.includes('pressure') || lower.includes('fear') || lower.includes('scared')) return 'stressed';
+  if (lower.includes('sad') || lower.includes('depressed') || lower.includes('down') || lower.includes('crying') || lower.includes('hurt') || lower.includes('unhappy')) return 'sad';
+  if (lower.includes('excited') || lower.includes('hyped') || lower.includes('thrilled') || lower.includes('can’t wait') || lower.includes('pumped') || lower.includes('amazing')) return 'excited';
+  if (lower.includes('happy') || lower.includes('great') || lower.includes('good') || lower.includes('proud') || lower.includes('aced') || lower.includes('lovely') || lower.includes('joy')) return 'happy';
   return 'calm';
 }
 

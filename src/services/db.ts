@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import type { DailyCheckIn, ActionTask, ExperimentDay, UserSettings, ChatMessage, UserProfile } from '../types';
+import type { DailyCheckIn, ActionTask, ExperimentDay, UserSettings, ChatMessage, UserProfile, ConversationSession, AppLanguage } from '../types';
 
 export const DEFAULT_EXPERIMENT_DAYS: ExperimentDay[] = [
   {
@@ -80,6 +80,7 @@ export class MindMirrorDatabase extends Dexie {
   experimentProgress!: Table<ExperimentDay, number>;
   settings!: Table<UserSettings, number>;
   chatHistory!: Table<ChatMessage, string>;
+  chatSessions!: Table<ConversationSession, string>;
   userProfile!: Table<UserProfile, number>;
 
   constructor() {
@@ -92,10 +93,61 @@ export class MindMirrorDatabase extends Dexie {
       chatHistory: 'id, timestamp, sender',
       userProfile: '++id, email, isLoggedIn',
     });
+    this.version(3).stores({
+      chatHistory: 'id, sessionId, timestamp, sender',
+      chatSessions: 'id, createdAt, updatedAt',
+    });
   }
 }
 
 export const db = new MindMirrorDatabase();
+
+// Conversation Session Management Helpers
+export async function getConversationSessions(): Promise<ConversationSession[]> {
+  try {
+    return await db.chatSessions.orderBy('updatedAt').reverse().toArray();
+  } catch (err) {
+    console.warn('Failed to load chat sessions:', err);
+    return [];
+  }
+}
+
+export async function createConversationSession(
+  title?: string,
+  language: AppLanguage = 'en-US'
+): Promise<ConversationSession> {
+  const sessionId = 'session_' + Date.now();
+  const session: ConversationSession = {
+    id: sessionId,
+    title: title || 'New Reflection with Pluto',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    preview: 'Conversation started...',
+    messageCount: 0,
+    language,
+    emotion: 'calm',
+  };
+  await db.chatSessions.add(session);
+  return session;
+}
+
+export async function deleteConversationSession(sessionId: string): Promise<void> {
+  try {
+    await db.chatSessions.delete(sessionId);
+    await db.chatHistory.where('sessionId').equals(sessionId).delete();
+  } catch (err) {
+    console.warn('Error deleting conversation session:', err);
+  }
+}
+
+export async function clearAllConversations(): Promise<void> {
+  try {
+    await db.chatSessions.clear();
+    await db.chatHistory.clear();
+  } catch (err) {
+    console.warn('Error clearing conversation history:', err);
+  }
+}
 
 export const DEFAULT_USER_PROFILE: UserProfile = {
   email: 'alex.rivera@berkeley.edu',
