@@ -1,0 +1,8 @@
+{
+  "name": "Mind Mirror AI",
+  "description": "Understand Your Patterns. Reflect. Take Your Next Step. AI-powered student wellness and productivity companion with 3D Pluto companion.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
